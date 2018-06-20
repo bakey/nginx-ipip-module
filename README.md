@@ -27,17 +27,31 @@ This module serves as a ip detect module
           curl -i http://example.com/test
 ## code
    $ipip_country_name  -- Chinese name of country
+
    $ipip_region_name   -- Chinese province or region 
+
    $ipip_city_name     -- Chinese city
+
    $ipip_owner_domain  -- 
+
    $ipip_network_domain -- Chinese network domain name
+
    $ipip_latitude       -- latitude
+
    $ipip_longitude      -- longitude
+
    $ipip_timezone_city  -- English timezone city name
+
    $ipip_timezone       -- Timezone
+
    $ipip_china_admin_code -- China admin code
+
    $ipip_telecode         -- China tele code
+
    $ipip_country_code     -- Englisth country code
+
    $ipip_continent_code   -- Englisth continenet code
+
    $ipip_idc              -- IDC
+   
    $ipip_basestation      -- Basestation of IP
