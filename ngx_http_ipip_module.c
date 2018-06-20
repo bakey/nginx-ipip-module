@@ -166,13 +166,23 @@ static int find_result_by_ip(const struct DBContext* ctx, const char *ip, char *
         uint max_comp_len = ctx->offset - 262144 - 4;
         uint index_offset = 0;
         uint index_length = 0;
-        for (start = start * 9 + 262144; start < max_comp_len; start += 9) {
-            if (B2IU(ctx->index + start) >= ip2long_value) {
-                index_offset = B2IL(ctx->index + start + 4) & 0x00FFFFFF;
-                index_length = (ctx->index[start+7] << 8) + ctx->index[start+8];
-                break;
+
+        //uint begin = start * 9 + 262144;
+        uint end = max_comp_len;
+        uint low = start * 9 + 262144;
+        uint high = end;
+        while (low <= high) {
+            uint mid = low + ((high - low) >> 1);
+            mid = low + (uint)((mid - low) / 9) * 9;
+            if (B2IU(ctx->index + mid) < ip2long_value) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
             }
         }
+        uint target = low;
+        index_offset = B2IL(ctx->index + target + 4) & 0x00FFFFFF;
+        index_length = (ctx->index[target+7] << 8) + ctx->index[target+8];
         memcpy(result, ctx->data + ctx->offset + index_offset - 262144, index_length);
         result[index_length] = '\0';
     }
@@ -256,6 +266,9 @@ static ngx_int_t ngx_ipip_set_variable(ngx_http_request_t *r,
 #define NGX_IPIP_IDC_VPN_CODE          13
 #define NGX_IPIP_BASESTATION_CODE      14
 
+static char *ngx_http_hello_ipip(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static ngx_int_t ngx_http_hello_ipip_handler(ngx_http_request_t *r);
+
 static char *ngx_http_ipip_db(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
 static ngx_int_t ngx_http_ipip_add_variables(ngx_conf_t *cf);
@@ -307,6 +320,14 @@ static ngx_command_t ngx_http_ipip_commands[] = {
                                             no arguments*/
       ngx_http_ipip_db, /* configuration setup function */
       NGX_HTTP_MAIN_CONF_OFFSET, /* No offset. Only one context is supported. */
+      0, /* No offset when storing the module configuration on struct. */
+      NULL},
+
+      { ngx_string("hello_ipip"), /* directive */
+      NGX_HTTP_LOC_CONF|NGX_CONF_NOARGS, /* location context and takes
+                                            no arguments*/
+      ngx_http_hello_ipip, /* configuration setup function */
+      0, /* No offset. Only one context is supported. */
       0, /* No offset when storing the module configuration on struct. */
       NULL},
 
@@ -584,4 +605,53 @@ static char *ngx_http_ipip_db(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     return NGX_CONF_OK;
 } /* ngx_http_ipip_db */
+
+static char *ngx_http_hello_ipip(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_http_core_loc_conf_t *clcf; /* pointer to core location configuration */
+
+    /* Install the hello world handler. */
+    clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+    clcf->handler = ngx_http_hello_ipip_handler;
+
+    return NGX_CONF_OK;
+}
+
+static ngx_int_t ngx_http_hello_ipip_handler(ngx_http_request_t *r)
+{
+    ngx_buf_t *b;
+    ngx_chain_t out;
+    ngx_http_ipip_conf_t  *icf = ngx_http_get_module_main_conf(r, ngx_http_ipip_module);
+
+    /* Set the Content-Type header. */
+    r->headers_out.content_type.len = sizeof("text/plain") - 1;
+    r->headers_out.content_type.data = (u_char *) "text/plain";
+
+    char ipstr[32];
+    char result[512];
+    ngx_http_ipip_addr_str(r, ipstr);
+    find_result_by_ip(icf->db_ctx, ipstr, result);
+
+    /* Allocate a new buffer for sending out the reply. */
+    b = ngx_pcalloc(r->pool, sizeof(ngx_buf_t));
+
+    /* Insertion in the buffer chain. */
+    out.buf = b;
+    out.next = NULL; /* just one buffer */
+
+    b->pos = (u_char *)result; /* first position in memory of the data */
+    b->last = (u_char *)result + ngx_strlen(result); /* last position in memory of the data */
+    b->memory = 1; /* content is in read-only memory */
+    b->last_buf = 1; /* there will be no more buffers in the request */
+
+    /* Sending the headers for the reply. */
+    r->headers_out.status = NGX_HTTP_OK; /* 200 status code */
+    /* Get the content length of the body. */
+    r->headers_out.content_length_n = ngx_strlen(result);
+    ngx_http_send_header(r); /* Send the headers */
+
+    /* Send the body, and return the status code of the output filter chain. */
+    return ngx_http_output_filter(r, &out);
+} /* ngx_http_hello_world_handler */
+
 
