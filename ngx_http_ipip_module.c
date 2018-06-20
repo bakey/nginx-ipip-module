@@ -208,7 +208,9 @@ static ngx_int_t get_element(ngx_http_request_t *r, char* result,
     int cnt = 0;
     while (rst) {
         if (index == cnt) {
-            ngx_memcpy(result, rst, ngx_strlen(rst));
+            size_t rlen = ngx_strlen(rst);
+            ngx_memcpy(result, rst, rlen);
+            result[rlen] = '\0';
             break;
         }
         rst = strtok_r_2(NULL, "\t", &lasts);
