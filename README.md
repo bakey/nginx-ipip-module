@@ -8,7 +8,7 @@ This module serves as a ip detect module
 
    1. Configure Nginx adding this module with:
           
-          ./configure --with-compat --add-module=/path/to/nginx-ipip-module
+          ./configure --with-compat --add-dynamic-module=/path/to/nginx-ipip-module
        
    2. Build with `make modules`.
    
