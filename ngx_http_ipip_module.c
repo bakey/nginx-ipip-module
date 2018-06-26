@@ -67,11 +67,12 @@ char *strtok_r_2(char *str, char const *delims, char **context) {
 
 static struct DBContext* init_db(const char* ipdb, int* error_code, ngx_conf_t *cf);
 static int destroy(struct DBContext* ctx);
-static int find_result_by_ip(const struct DBContext* ctx,const char *ip, char *result);
+static ngx_int_t find_result_by_ip(const struct DBContext* ctx,const char *ip, char *result);
 static ngx_int_t ngx_http_ipip_addr_str(ngx_http_request_t *r, char* ipstr);
 
 typedef struct {
     struct DBContext   *db_ctx;
+    ngx_http_complex_value_t ip_source;
 } ngx_http_ipip_conf_t;
 
 int destroy(struct DBContext* ctx) {
@@ -156,7 +157,10 @@ struct DBContext* init_db(const char* ipdb, int* error_code, ngx_conf_t *cf) {
     return ctx;
 }
 
-static int find_result_by_ip(const struct DBContext* ctx, const char *ip, char *result) {
+static ngx_int_t find_result_by_ip(const struct DBContext* ctx, const char *ip, char *result) {
+    if (ctx == NULL) {
+        return NGX_ERROR;
+    }
     uint ips[4];
     int num = sscanf(ip, "%d.%d.%d.%d", &ips[0], &ips[1], &ips[2], &ips[3]);
     if (num == 4) {
@@ -186,7 +190,7 @@ static int find_result_by_ip(const struct DBContext* ctx, const char *ip, char *
         memcpy(result, ctx->data + ctx->offset + index_offset - 262144, index_length);
         result[index_length] = '\0';
     }
-    return 0;
+    return NGX_OK;
 }
 
 /*char *ngx_ip_result_desc[] = {
@@ -196,11 +200,31 @@ static int find_result_by_ip(const struct DBContext* ctx, const char *ip, char *
 };*/
 
 ngx_module_t ngx_http_ipip_module;
+
 static ngx_int_t get_element(ngx_http_request_t *r, char* result, 
-    struct DBContext *db_ctx, int index) {
+    ngx_http_ipip_conf_t* icf, int index) {
+    struct DBContext *db_ctx = icf->db_ctx;
+    int errorcode;
     char ipstr[32];
-    ngx_http_ipip_addr_str(r, ipstr);
-    find_result_by_ip(db_ctx, ipstr, result);
+    ngx_str_t complex_ip_val;
+
+    if (icf->ip_source.value.len > 0) {
+        if (ngx_http_complex_value(r, &icf->ip_source, &complex_ip_val) != NGX_OK) {
+            return NGX_ERROR;
+        }
+        complex_ip_val.data[complex_ip_val.len] = '\0';
+    } else {
+        ngx_http_ipip_addr_str(r, ipstr);
+        complex_ip_val.len = ngx_strlen(ipstr);
+        complex_ip_val.data = ngx_pnalloc(r->pool, complex_ip_val.len+1);
+        ngx_memcpy(complex_ip_val.data, ipstr, complex_ip_val.len);
+        complex_ip_val.data[complex_ip_val.len] = '\0';
+    }
+    //fprintf(stderr, "resolve ip : %s\n", complex_ip_val.data);
+    errorcode = find_result_by_ip(db_ctx, (const char*)complex_ip_val.data, result);
+    if (errorcode != NGX_OK) {
+        return errorcode;
+    }
 
     char *rst = NULL;
     char *lasts = NULL;
@@ -227,7 +251,7 @@ static ngx_int_t ngx_ipip_set_variable(ngx_http_request_t *r,
     char result[1024];
     size_t val_len;
 
-    int ret = get_element(r, result, icf->db_ctx, index);
+    int ret = get_element(r, result, icf, index);
     if (ret != 0) {
         return NGX_ERROR;
     }
@@ -272,6 +296,9 @@ static char *ngx_http_hello_ipip(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 static ngx_int_t ngx_http_hello_ipip_handler(ngx_http_request_t *r);
 
 static char *ngx_http_ipip_db(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_ipip_parse_ip(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_ipip_add_parse_ip_variable(ngx_conf_t *cf, ngx_command_t *dummy, 
+ void *conf);
 
 static ngx_int_t ngx_http_ipip_add_variables(ngx_conf_t *cf);
 
@@ -318,8 +345,7 @@ static void ngx_http_ipip_cleanup(void *data);
 static ngx_command_t ngx_http_ipip_commands[] = {
 
     { ngx_string("ipip_db"), /* directive */
-      NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1, /* location context and takes
-                                            no arguments*/
+      NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1, /* location context and takes*/
       ngx_http_ipip_db, /* configuration setup function */
       NGX_HTTP_MAIN_CONF_OFFSET, /* No offset. Only one context is supported. */
       0, /* No offset when storing the module configuration on struct. */
@@ -330,6 +356,13 @@ static ngx_command_t ngx_http_ipip_commands[] = {
                                             no arguments*/
       ngx_http_hello_ipip, /* configuration setup function */
       0, /* No offset. Only one context is supported. */
+      0, /* No offset when storing the module configuration on struct. */
+      NULL},
+
+      { ngx_string("ipip_parse_ip"), /* directive */
+      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
+      ngx_ipip_parse_ip, /* configuration setup function */
+      NGX_HTTP_MAIN_CONF_OFFSET | NGX_HTTP_LOC_CONF_OFFSET | NGX_HTTP_SRV_CONF_OFFSET, /* No offset. Only one context is supported. */
       0, /* No offset when storing the module configuration on struct. */
       NULL},
 
@@ -607,12 +640,17 @@ static char *ngx_http_ipip_db(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     return NGX_CONF_OK;
 } /* ngx_http_ipip_db */
+static char *ngx_ipip_parse_ip(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_ipip_add_parse_ip_variable(cf, cmd, NULL);
+    return NGX_CONF_OK;
+} /* ngx_ipip_parse_ip */
+
 
 static char *ngx_http_hello_ipip(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
     ngx_http_core_loc_conf_t *clcf; /* pointer to core location configuration */
 
-    /* Install the hello world handler. */
     clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
     clcf->handler = ngx_http_hello_ipip_handler;
 
@@ -656,4 +694,31 @@ static ngx_int_t ngx_http_hello_ipip_handler(ngx_http_request_t *r)
     return ngx_http_output_filter(r, &out);
 } /* ngx_http_hello_world_handler */
 
+static char *ngx_ipip_add_parse_ip_variable(ngx_conf_t *cf, ngx_command_t *dummy, 
+    void *handler_conf) {
+    ngx_str_t* value;
+    ngx_str_t name, source;
+    ngx_http_compile_complex_value_t ccv;
+    
+    ngx_http_ipip_conf_t* icf = ngx_http_conf_get_module_main_conf(cf, ngx_http_ipip_module);
 
+    value = cf->args->elts;
+    name = value[0];
+    source = value[1];
+    if (source.data[0] != '$') {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid variable source %s", source.data);
+        return NGX_CONF_ERROR;
+    }
+
+    ngx_memzero(&ccv, sizeof(ngx_http_compile_complex_value_t));
+    ccv.cf = cf;
+    ccv.value = &source;
+    ccv.complex_value = &icf->ip_source;
+
+    if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                "unable to compile \"%V\" for \"$%V\"", &source, &name);
+        return NGX_CONF_ERROR;
+    }
+    return NGX_CONF_OK;
+}
