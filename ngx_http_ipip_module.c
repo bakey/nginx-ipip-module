@@ -179,14 +179,15 @@ static ngx_int_t find_result_by_ip(const struct DBContext* ctx, const char *ip, 
             uint mid = low + ((high - low) >> 1);
             mid = low + (uint)((mid - low) / 9) * 9;
             if (B2IU(ctx->index + mid) < ip2long_value) {
-                low = mid + 1;
+                low = mid + 9;
             } else {
-                high = mid - 1;
+                high = mid - 9;
             }
         }
         uint target = low;
         index_offset = B2IL(ctx->index + target + 4) & 0x00FFFFFF;
         index_length = (ctx->index[target+7] << 8) + ctx->index[target+8];
+        //fprintf(stderr, "index length = %u\n", index_length);
         memcpy(result, ctx->data + ctx->offset + index_offset - 262144, index_length);
         result[index_length] = '\0';
     }
