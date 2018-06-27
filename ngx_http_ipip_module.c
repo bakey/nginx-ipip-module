@@ -222,18 +222,23 @@ static ngx_int_t get_element(ngx_http_request_t *r, char* result,
         complex_ip_val.data[complex_ip_val.len] = '\0';
     }
     //fprintf(stderr, "resolve ip : %s\n", complex_ip_val.data);
-    errorcode = find_result_by_ip(db_ctx, (const char*)complex_ip_val.data, result);
+    char db_result[1024] = {"\0"};
+    errorcode = find_result_by_ip(db_ctx, (const char*)complex_ip_val.data, db_result);
+    //fprintf(stderr, "find result : %s\n", result);
     if (errorcode != NGX_OK) {
         return errorcode;
     }
 
     char *rst = NULL;
     char *lasts = NULL;
-    rst = strtok_r_2(result, "\t", &lasts);
+    rst = strtok_r_2(db_result, "\t", &lasts);
     int cnt = 0;
+    //fprintf(stderr, "index len = %d\n", index);
     while (rst) {
         if (index == cnt) {
             size_t rlen = ngx_strlen(rst);
+            //fprintf(stderr, "cnt %d, rst len = %lu\n", cnt, rlen);
+            
             ngx_memcpy(result, rst, rlen);
             result[rlen] = '\0';
             break;
@@ -241,6 +246,7 @@ static ngx_int_t get_element(ngx_http_request_t *r, char* result,
         rst = strtok_r_2(NULL, "\t", &lasts);
         ++ cnt;
     }
+    //fprintf(stderr, "total cnt = %d\n", cnt);
 
     return NGX_OK;
 }
@@ -249,7 +255,7 @@ static ngx_int_t ngx_ipip_set_variable(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, int index) {
     ngx_http_ipip_conf_t  *icf = ngx_http_get_module_main_conf(r, ngx_http_ipip_module);
 
-    char result[1024];
+    char result[256] = {"\0"};
     size_t val_len;
 
     int ret = get_element(r, result, icf, index);
@@ -258,6 +264,7 @@ static ngx_int_t ngx_ipip_set_variable(ngx_http_request_t *r,
     }
 
     val_len = ngx_strlen(result);
+    //fprintf(stderr, "get val len = %lu\n", val_len);
     v->data = ngx_pnalloc(r->pool, val_len + 1);
     if (v->data == NULL) {
         return NGX_ERROR;
