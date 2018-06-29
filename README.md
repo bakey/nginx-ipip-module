@@ -55,3 +55,4 @@ This module serves as a ip detect module
    $ipip_idc              -- IDC
    
    $ipip_basestation      -- Basestation of IP
+   $ipip_anycast          -- Indicate a anycast IP
