@@ -620,12 +620,25 @@ static char *ngx_http_ipip_db(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     icf->db_name.data = ngx_pnalloc(cf->pool, value[1].len+1);
     icf->db_name.len = value[1].len;
     ngx_memcpy(icf->db_name.data, value[1].data, icf->db_name.len);
+    icf->db_name.data[icf->db_name.len] = '\0';
+
+    struct stat attr;
+    int ret = stat((char *)(icf->db_name.data), &attr);
+    if (ret != 0) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "stat db file failed for : %s", (icf->db_name.data));
+        return NGX_CONF_ERROR;
+    }
+
+
+   // ngx_time_init();
 
     icf->last_check = icf->last_change = ngx_time();
+
     interval = ngx_parse_time(&value[2], 1);
 
     ngx_conf_log_error(NGX_LOG_NOTICE, cf, 0,
-                           "check interval = %d", (ngx_int_t)interval);
+                           "check interval = %d second", (ngx_int_t)interval);
 
     if (interval == (time_t) NGX_ERROR) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
@@ -651,20 +664,32 @@ static char *ngx_http_ipip_db(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 static ngx_int_t ngx_http_ipip_reload_db(ngx_http_ipip_conf_t  *icf) {
 
     struct DBContext *tmp_ctx;
-    struct stat  attr;
+    struct stat attr;
     int error_code = 0;
 
+    ngx_time_update();
     if (icf->check_interval > 0
             && icf->last_check + icf->check_interval <= ngx_time()) {
         icf->last_check = ngx_time();
-        stat((char *) icf->db_name.data, &attr);
+        
+        /*int fd = ngx_open_file((char *)(icf->db_name.data), NGX_FILE_RDONLY, NGX_FILE_OPEN, 0);
+        if (fd < 0) {
+            fprintf(stderr, "open file failed for : %s\n", strerror(errno));
+        }*/
+        if (stat((char *)(icf->db_name.data), &attr) != 0) {
+            return NGX_ERROR;
+        }
+
+        //fprintf(stderr, "last change = %u, [%s] file mtime = %lu\n", (unsigned)(icf->last_change), 
+        //    (char *) (icf->db_name.data), (unsigned long)attr.st_mtime);
 
         if (attr.st_mtime > icf->last_change) {
             //destroy(icf->db_ctx);
             //icf->db_ctx = NULL;
-            tmp_ctx = init_db((char *) icf->db_name.data, &error_code, NULL);
+            tmp_ctx = init_db((char *) (icf->db_name.data), &error_code, NULL);
 
             if (tmp_ctx == NULL) {
+                //fprintf(stderr, "init db failed\n");
                 //ngx_conf_log_error(NGX_LOG_NOTICE, ncf, 0,
                 //               "ipip open db = %s failed, error code = %d",
                 //               (char *) value[1].data, error_code);
